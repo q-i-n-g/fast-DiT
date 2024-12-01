@@ -87,6 +87,16 @@ def center_crop_arr(pil_image, image_size):
     Center cropping implementation from ADM.
     https://github.com/openai/guided-diffusion/blob/8fb3ad9197f16bbc40620447b2742e13458d2831/guided_diffusion/image_datasets.py#L126
     """
+    # Create a new black image with size 2 * image_size
+    new_size = 2 * image_size
+    new_image = Image.new('RGB', (new_size, new_size), (0, 0, 0))
+
+    # Calculate the position to paste the original image at the center
+    left = (new_size - pil_image.width) // 2
+    top = (new_size - pil_image.height) // 2
+    new_image.paste(pil_image, (left, top))
+
+    pil_image = new_image
     while min(*pil_image.size) >= 2 * image_size:
         pil_image = pil_image.resize(
             tuple(x // 2 for x in pil_image.size), resample=Image.BOX
@@ -137,7 +147,7 @@ def main(args):
     # Setup data:
     transform = transforms.Compose([
         transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, args.image_size)),
-        transforms.RandomHorizontalFlip(),
+        # transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True)
     ])

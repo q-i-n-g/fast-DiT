@@ -31,7 +31,7 @@ from accelerate import Accelerator
 from models import DiT_models
 from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
-
+from tqdm import tqdm
 
 #################################################################################
 #                             Training Helper Functions                         #
@@ -78,6 +78,16 @@ def center_crop_arr(pil_image, image_size):
     Center cropping implementation from ADM.
     https://github.com/openai/guided-diffusion/blob/8fb3ad9197f16bbc40620447b2742e13458d2831/guided_diffusion/image_datasets.py#L126
     """
+    # Create a new black image with size 2 * image_size
+    new_size = 2 * image_size
+    new_image = Image.new('RGB', (new_size, new_size), (0, 0, 0))
+
+    # Calculate the position to paste the original image at the center
+    left = (new_size - pil_image.width) // 2
+    top = (new_size - pil_image.height) // 2
+    new_image.paste(pil_image, (left, top))
+
+    pil_image = new_image
     while min(*pil_image.size) >= 2 * image_size:
         pil_image = pil_image.resize(
             tuple(x // 2 for x in pil_image.size), resample=Image.BOX
@@ -146,7 +156,8 @@ def main(args):
     latent_size = args.image_size // 8
     model = DiT_models[args.model](
         input_size=latent_size,
-        num_classes=args.num_classes
+        num_classes=args.num_classes,
+        class_dropout_prob=0.0
     )
     # Note that parameter initialization is done within the DiT constructor
     model = model.to(device)
@@ -189,7 +200,7 @@ def main(args):
     
     if accelerator.is_main_process:
         logger.info(f"Training for {args.epochs} epochs...")
-    for epoch in range(args.epochs):
+    for epoch in tqdm(range(args.epochs)):
         if accelerator.is_main_process:
             logger.info(f"Beginning epoch {epoch}...")
         for x, y in loader:
@@ -250,15 +261,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--feature-path", type=str, default="features")
     parser.add_argument("--results-dir", type=str, default="results")
-    parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-XL/2")
+    parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-XL/4")
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
-    parser.add_argument("--num-classes", type=int, default=1000)
-    parser.add_argument("--epochs", type=int, default=1400)
+    parser.add_argument("--num-classes", type=int, default=1)
+    parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--global-batch-size", type=int, default=256)
     parser.add_argument("--global-seed", type=int, default=0)
     parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")  # Choice doesn't affect training
-    parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--log-every", type=int, default=100)
-    parser.add_argument("--ckpt-every", type=int, default=50_000)
+    parser.add_argument("--ckpt-every", type=int, default=10_000)
     args = parser.parse_args()
     main(args)
