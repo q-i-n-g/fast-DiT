@@ -32,7 +32,7 @@ from models import DiT_models
 from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
 from tqdm import tqdm
-
+from torchvision.utils import save_image
 #################################################################################
 #                             Training Helper Functions                         #
 #################################################################################
@@ -147,7 +147,9 @@ def main(args):
         model_string_name = args.model.replace("/", "-")  # e.g., DiT-XL/2 --> DiT-XL-2 (for naming folders)
         experiment_dir = f"{args.results_dir}/{experiment_index:03d}-{model_string_name}"  # Create an experiment folder
         checkpoint_dir = f"{experiment_dir}/checkpoints"  # Stores saved model checkpoints
+        samples_dir = f"{experiment_dir}/samples"
         os.makedirs(checkpoint_dir, exist_ok=True)
+        os.makedirs(samples_dir, exist_ok=True)
         logger = create_logger(experiment_dir)
         logger.info(f"Experiment directory created at {experiment_dir}")
 
@@ -248,8 +250,21 @@ def main(args):
                     checkpoint_path = f"{checkpoint_dir}/{train_steps:07d}.pt"
                     torch.save(checkpoint, checkpoint_path)
                     logger.info(f"Saved checkpoint to {checkpoint_path}")
+            if train_steps % args.sample_every == 0 and train_steps > 0:
+                model.eval()
+                if accelerator.is_main_process:
+                    diffusion = create_diffusion("250")
+                    z = torch.randn(1, 4, latent_size, latent_size, device=device)
+                    class_labels = torch.tensor([0], device=device)
+                    model_kwargs = dict(y=class_labels)
+                    samples = diffusion.p_sample_loop(model.forward, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device)
+                    samples = vae.decode(samples / 0.18215).sample
+                    samples = (samples + 1) / 2
+                    save_image(samples, f"{experiment_dir}/samples/{train_steps:07d}.png")
+                    logger.info(f"Saved samples to {experiment_dir}/samples/")
+                model.train() 
 
-    model.eval()  # important! This disables randomized embedding dropout
+                      # important! This disables randomized embedding dropout
     # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
     
     if accelerator.is_main_process:
@@ -270,6 +285,7 @@ if __name__ == "__main__":
     parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")  # Choice doesn't affect training
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--log-every", type=int, default=100)
-    parser.add_argument("--ckpt-every", type=int, default=10_000)
+    parser.add_argument("--ckpt-every", type=int, default=1_000)
+    parser.add_argument("--sample-every", type=int, default=200)
     args = parser.parse_args()
     main(args)
