@@ -37,21 +37,20 @@ def main(args):
         class_dropout_prob=0.0
     ).to(device)
 
-    ckpt_path = args.ckpt or f"DiT-XL-2-{args.image_size}x{args.image_size}.pt"
+    ckpt_path = args.ckpt 
     state_dict = find_model(ckpt_path)
     model.load_state_dict(state_dict)
     model.eval()
-    diffusion = create_diffusion("")
+    diffusion = create_diffusion("100")
     vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
 
     # Create sampling noise:
-    n = 4  # Number of images to generate
-    z = torch.randn(n, 4, latent_size, latent_size, device=device)
+    n = 1  # Number of images to generate
+    z = torch.randn(1, 4, latent_size, latent_size, device=device)
 
     # Define fixed class labels (all 0):
-    class_labels = [0] * n
-    y = torch.tensor(class_labels, device=device)
-    model_kwargs = dict(y=y)
+    class_labels = torch.tensor([0], device=device)
+    model_kwargs = dict(y=class_labels)
 
     # Sample images:
     samples = diffusion.p_sample_loop(
@@ -64,7 +63,7 @@ def main(args):
 
     # Save and display images:
     samples = (samples + 1) / 2  
-    save_image(samples, "sample.png", nrow=4 )
+    save_image(samples, "sample.png")
     print(f"Generated {n} images and saved to sample.png")
 
 

@@ -125,7 +125,23 @@ class CustomDataset(Dataset):
         labels = np.load(os.path.join(self.labels_dir, label_file))
         return torch.from_numpy(features), torch.from_numpy(labels)
 
-
+def load_checkpoint(checkpoint_path, device):   
+    checkpoint = torch.load(checkpoint_path, map_location=lambda storage, loc: storage)
+    if "train_steps" in checkpoint:
+        train_steps = checkpoint["train_steps"]
+    else:
+        train_steps = 4001
+    args = checkpoint["args"]
+    model = DiT_models[args.model](
+        input_size=args.image_size // 8,
+        num_classes=args.num_classes,
+        class_dropout_prob=0.0
+    ).to(device)
+    model.load_state_dict(checkpoint["model"])
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
+    opt.load_state_dict(checkpoint["opt"])
+    vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
+    return model, opt, train_steps, args, vae
 #################################################################################
 #                                  Training Loop                                #
 #################################################################################
@@ -154,26 +170,32 @@ def main(args):
         logger.info(f"Experiment directory created at {experiment_dir}")
 
     # Create model:
-    assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
-    latent_size = args.image_size // 8
-    model = DiT_models[args.model](
-        input_size=latent_size,
-        num_classes=args.num_classes,
-        class_dropout_prob=0.0
-    )
-    # Note that parameter initialization is done within the DiT constructor
-    model = model.to(device)
-    ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
-    requires_grad(ema, False)
+    
     diffusion = create_diffusion(timestep_respacing="")  # default: 1000 steps, linear noise schedule
-    vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
-    if accelerator.is_main_process:
-        logger.info(f"DiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
-    opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
 
-    # Setup data:
+    if args.ckpt_path is not None:
+        model, opt, train_steps, _, vae = load_checkpoint(args.ckpt_path, device)
+        assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
+        latent_size = args.image_size // 8
+        if accelerator.is_main_process:
+            logger.info(f"Loaded checkpoint from {args.ckpt_path}")
+    else:
+        assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
+        latent_size = args.image_size // 8
+        model = DiT_models[args.model](
+            input_size=latent_size,
+            num_classes=args.num_classes,
+            class_dropout_prob=0.0
+        ).to(device)
+        vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
+        opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
+        train_steps = 0
+    if accelerator.is_main_process:
+        if accelerator.is_main_process:
+            logger.info(f"DiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
+
     features_dir = f"{args.feature_path}/imagenet256_features"
     labels_dir = f"{args.feature_path}/imagenet256_labels"
     dataset = CustomDataset(features_dir, labels_dir)
@@ -189,13 +211,10 @@ def main(args):
         logger.info(f"Dataset contains {len(dataset):,} images ({args.feature_path})")
 
     # Prepare models for training:
-    update_ema(ema, model, decay=0)  # Ensure EMA is initialized with synced weights
     model.train()  # important! This enables embedding dropout for classifier-free guidance
-    ema.eval()  # EMA model should always be in eval mode
     model, opt, loader = accelerator.prepare(model, opt, loader)
 
     # Variables for monitoring/logging purposes:
-    train_steps = 0
     log_steps = 0
     running_loss = 0
     start_time = time()
@@ -217,7 +236,6 @@ def main(args):
             opt.zero_grad()
             accelerator.backward(loss)
             opt.step()
-            update_ema(ema, model)
 
             # Log loss values:
             running_loss += loss.item()
@@ -243,9 +261,9 @@ def main(args):
                 if accelerator.is_main_process:
                     checkpoint = {
                         "model": model.module.state_dict(),
-                        "ema": ema.state_dict(),
                         "opt": opt.state_dict(),
-                        "args": args
+                        "args": args,
+                        "train_steps": train_steps
                     }
                     checkpoint_path = f"{checkpoint_dir}/{train_steps:07d}.pt"
                     torch.save(checkpoint, checkpoint_path)
@@ -253,7 +271,7 @@ def main(args):
             if train_steps % args.sample_every == 0 and train_steps > 0:
                 model.eval()
                 if accelerator.is_main_process:
-                    diffusion = create_diffusion("250")
+                    diffusion = create_diffusion("100")
                     z = torch.randn(1, 4, latent_size, latent_size, device=device)
                     class_labels = torch.tensor([0], device=device)
                     model_kwargs = dict(y=class_labels)
@@ -285,7 +303,8 @@ if __name__ == "__main__":
     parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")  # Choice doesn't affect training
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--log-every", type=int, default=100)
-    parser.add_argument("--ckpt-every", type=int, default=1_000)
+    parser.add_argument("--ckpt-every", type=int, default=2_000)
     parser.add_argument("--sample-every", type=int, default=200)
+    parser.add_argument("--ckpt-path", type=str, default=None)
     args = parser.parse_args()
     main(args)
