@@ -128,9 +128,9 @@ class CustomDataset(Dataset):
 def load_checkpoint(checkpoint_path, device):   
     checkpoint = torch.load(checkpoint_path, map_location=lambda storage, loc: storage)
     if "train_steps" in checkpoint:
-        train_steps = checkpoint["train_steps"]
+        train_steps = checkpoint["train_steps"]+1
     else:
-        train_steps = 4001
+        train_steps = 22001
     args = checkpoint["args"]
     model = DiT_models[args.model](
         input_size=args.image_size // 8,
@@ -176,7 +176,8 @@ def main(args):
     # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
 
     if args.ckpt_path is not None:
-        model, opt, train_steps, _, vae = load_checkpoint(args.ckpt_path, device)
+        model, _, train_steps, _, vae = load_checkpoint(args.ckpt_path, device)
+        opt = torch.optim.AdamW(model.parameters(), lr=2e-4, weight_decay=0)
         assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
         latent_size = args.image_size // 8
         if accelerator.is_main_process:

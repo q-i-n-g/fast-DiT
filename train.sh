@@ -1,0 +1,2 @@
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+accelerate launch --multi_gpu --num_processes 4 --mixed_precision fp16 train.py --model DiT-XL/4 --feature-path /root/DIT/DiT/fast-DiT/features --num-classes 1 --epochs 200 --global-batch-size 512 --num-workers 24 --ckpt-path /remote-home/fast-DiT/results/001-DiT-XL-4/checkpoints/0022000.pt

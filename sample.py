@@ -41,15 +41,15 @@ def main(args):
     state_dict = find_model(ckpt_path)
     model.load_state_dict(state_dict)
     model.eval()
-    diffusion = create_diffusion("100")
+    diffusion = create_diffusion("500")
     vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
 
     # Create sampling noise:
-    n = 1  # Number of images to generate
-    z = torch.randn(1, 4, latent_size, latent_size, device=device)
+    n = 4  # Number of images to generate
+    z = torch.randn(4, 4, latent_size, latent_size, device=device)
 
     # Define fixed class labels (all 0):
-    class_labels = torch.tensor([0], device=device)
+    class_labels = torch.tensor([0]*4, device=device)
     model_kwargs = dict(y=class_labels)
 
     # Sample images:
